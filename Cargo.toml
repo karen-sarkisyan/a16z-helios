@@ -21,6 +21,7 @@ members = [
     "verifiable-api/client",
     "verifiable-api/server",
     "verifiable-api/types", "linea",
+    "e2e-tests",
 ]
 
 default-members = ["cli"]

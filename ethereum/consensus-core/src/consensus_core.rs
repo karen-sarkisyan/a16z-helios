@@ -294,6 +294,15 @@ pub fn verify_generic_update<S: ConsensusSpec>(
 
     if let Some(finalized_header) = &update.finalized_header {
         if let Some(finality_branch) = &update.finality_branch {
+            // Special case for genesis block
+            let is_genesis = finalized_header.beacon().slot == 0
+                || (finalized_header.beacon().parent_root == B256::ZERO
+                    && calc_sync_period::<S>(finalized_header.beacon().slot) == 0);
+
+            if is_genesis {
+                // Genesis blocks are implicitly finalized
+                return Ok(());
+            }
             if !is_valid_header::<S>(finalized_header, forks) {
                 return Err(ConsensusError::InvalidExecutionPayloadProof.into());
             }
@@ -378,7 +387,7 @@ pub fn force_update<S: ConsensusSpec>(store: &mut LightClientStore<S>, current_s
     }
 }
 
-pub fn expected_current_slot(now: SystemTime, genesis_time: u64) -> u64 {
+pub fn expected_current_slot<S: ConsensusSpec>(now: SystemTime, genesis_time: u64) -> u64 {
     let now = now
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| panic!("unreachable"))
@@ -386,7 +395,7 @@ pub fn expected_current_slot(now: SystemTime, genesis_time: u64) -> u64 {
 
     let since_genesis = now - genesis_time;
 
-    since_genesis / 12
+    since_genesis / S::seconds_per_slot()
 }
 
 pub fn calc_sync_period<S: ConsensusSpec>(slot: u64) -> u64 {

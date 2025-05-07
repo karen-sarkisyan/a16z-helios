@@ -153,14 +153,20 @@ struct EthereumArgs {
     load_external_fallback: bool,
     #[arg(short = 's', long, env)]
     strict_checkpoint_age: bool,
+    #[arg(long, help = "Path to the Helios custom configuration file")]
+    config_path: Option<PathBuf>,
 }
 
 impl EthereumArgs {
     fn make_client(&self) -> EthereumClient<FileDB> {
-        let config_path = home_dir().unwrap().join(".helios/helios.toml");
+        let config_path = match &self.config_path {
+            Some(path) => path.clone(),
+            None => home_dir().unwrap().join(".helios/helios.toml"),
+        };
         let cli_config = self.as_cli_config();
         let config = EthereumConfig::from_file(&config_path, &self.network, &cli_config);
 
+        println!("Config: {:?}", config);
         match EthereumClientBuilder::new()
             .config(config)
             .build::<FileDB>()

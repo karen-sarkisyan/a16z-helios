@@ -1,0 +1,27 @@
+[package]
+name = "helios-e2e-tests"
+version = "0.1.0" # Use a specific version, not workspace for now, might change later
+edition = "2021"
+publish = false # This crate is not meant to be published
+
+[dependencies]
+alloy.workspace = true
+tokio = { version = "1", features = ["full"] }
+eyre = "0.6"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json"] }
+url = "2.5"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+tempfile = "3.4"
+duct = "0.13.7"
+kurtosis-sdk = "1.7.2"
+toml = "0.8"
+figment = { version = "0.10", features = ["toml"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4" 

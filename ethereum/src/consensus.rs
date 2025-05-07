@@ -12,6 +12,7 @@ use chrono::Duration;
 use eyre::eyre;
 use eyre::Result;
 use futures::future::join_all;
+use helios_consensus_core::types::OptimisticUpdate;
 use tracing::{debug, error, info, warn};
 use tree_hash::TreeHash;
 
@@ -21,12 +22,13 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::watch;
 
 use helios_consensus_core::{
-    apply_bootstrap, apply_finality_update, apply_update, calc_sync_period,
+    apply_bootstrap, apply_finality_update, apply_optimistic_update, apply_update,
+    calc_sync_period,
     consensus_spec::ConsensusSpec,
     errors::ConsensusError,
     expected_current_slot, get_bits,
     types::{ExecutionPayload, FinalityUpdate, LightClientStore, Update},
-    verify_bootstrap, verify_finality_update, verify_update,
+    verify_bootstrap, verify_finality_update, verify_optimistic_update, verify_update,
 };
 use helios_core::consensus::Consensus;
 use helios_core::time::{interval_at, Instant, SystemTime, UNIX_EPOCH};
@@ -140,7 +142,8 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>, DB: Database> ConsensusClient<S, R, D
             _ = inner.send_blocks().await;
 
             let start = Instant::now() + inner.duration_until_next_update().to_std().unwrap();
-            let mut interval = interval_at(start, std::time::Duration::from_secs(12));
+            let mut interval =
+                interval_at(start, std::time::Duration::from_secs(S::seconds_per_slot()));
 
             loop {
                 tokio::select! {
@@ -188,7 +191,7 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>, DB: Database> ConsensusClient<S, R, D
     pub fn expected_current_slot(&self) -> u64 {
         let now = SystemTime::now();
 
-        expected_current_slot(now, self.genesis_time)
+        expected_current_slot::<S>(now, self.genesis_time)
     }
 }
 
@@ -363,9 +366,18 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
             self.verify_update(&update)?;
             self.apply_update(&update);
         }
-        let finality_update = self.rpc.get_finality_update().await?;
+        // let finality_update = self.rpc.get_finality_update().await?;
+        // self.verify_finality_update(&finality_update)?;
+        // self.apply_finality_update(&finality_update);
+        match self.rpc.get_finality_update().await {
+            Ok(finality_update) => {
         self.verify_finality_update(&finality_update)?;
         self.apply_finality_update(&finality_update);
+            }
+            Err(err) => {
+                warn!(target: "helios::consensus::sync", err = %err, "could not fetch initial finality update, network might be too young or RPC node might be lagging");
+            }
+        }
 
         info!(
             target: "helios::consensus",
@@ -409,9 +421,30 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
     }
 
     pub async fn advance(&mut self) -> Result<()> {
-        let finality_update = self.rpc.get_finality_update().await?;
+        // let finality_update = self.rpc.get_finality_update().await?;
+
+        match self.rpc.get_finality_update().await {
+            Ok(finality_update) => {
         self.verify_finality_update(&finality_update)?;
         self.apply_finality_update(&finality_update);
+            }
+            Err(err) => {
+                warn!(target: "helios::consensus::advance", err = %err, "could not fetch initial finality update, fall back to update");
+
+                // let updates: Vec<Update<S>> = self.get_updates().await?;
+
+                // for update in updates {
+                //     self.verify_update(&update)?;
+                //     self.apply_update(&update);
+                // }
+                let optimistic_update: OptimisticUpdate<S> =
+                    self.rpc.get_optimistic_update().await?;
+                self.verify_optimistic_update(&optimistic_update)?;
+                self.apply_optimistic_update(&optimistic_update);
+            }
+        }
+        // self.verify_finality_update(&finality_update)?;
+        // self.apply_finality_update(&finality_update);
 
         if self.store.next_sync_committee.is_none() {
             debug!(target: "helios::consensus", "checking for sync committee update");
@@ -507,6 +540,16 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
         )
     }
 
+    fn verify_optimistic_update(&self, update: &OptimisticUpdate<S>) -> Result<()> {
+        verify_optimistic_update::<S>(
+            update,
+            self.expected_current_slot(),
+            &self.store,
+            self.config.chain.genesis_root,
+            &self.config.forks,
+        )
+    }
+
     pub fn apply_update(&mut self, update: &Update<S>) {
         let new_checkpoint = apply_update::<S>(&mut self.store, update);
         if new_checkpoint.is_some() {
@@ -528,6 +571,16 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
         }
         if new_optimistic_slot != prev_optimistic_slot {
             self.log_optimistic_update(update)
+        }
+    }
+
+    fn apply_optimistic_update(&mut self, update: &OptimisticUpdate<S>) {
+        let prev_optimistic_slot = self.store.optimistic_header.beacon().slot;
+        // Call the core consensus logic
+        apply_optimistic_update::<S>(&mut self.store, update);
+        // Log if the optimistic header actually changed
+        if self.store.optimistic_header.beacon().slot != prev_optimistic_slot {
+            self.log_optimistic_update_from_optimistic(update);
         }
     }
 
@@ -569,6 +622,25 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
         );
     }
 
+    fn log_optimistic_update_from_optimistic(&self, optimistic_update: &OptimisticUpdate<S>) {
+        let size = S::sync_committee_size() as f32;
+        let participation =
+            get_bits::<S>(&optimistic_update.sync_aggregate.sync_committee_bits) as f32 / size
+                * 100f32;
+        let decimals = if participation == 100.0 { 1 } else { 2 };
+        let age = self.age(self.store.optimistic_header.beacon().slot);
+        info!(
+            target: "helios::consensus",
+            "updated head (optimistic)  slot={}  confidence={:.decimals$}%  age={:02}:{:02}:{:02}:{:02}", // Indicate source
+            self.store.optimistic_header.beacon().slot,
+            participation,
+            age.num_days(),
+            age.num_hours() % 24,
+            age.num_minutes() % 60,
+            age.num_seconds() % 60,
+        );
+    }
+
     fn age(&self, slot: u64) -> Duration {
         let expected_time = self.slot_timestamp(slot);
         let now = SystemTime::now()
@@ -582,11 +654,11 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
     pub fn expected_current_slot(&self) -> u64 {
         let now = SystemTime::now();
 
-        expected_current_slot(now, self.config.chain.genesis_time)
+        expected_current_slot::<S>(now, self.config.chain.genesis_time)
     }
 
     fn slot_timestamp(&self, slot: u64) -> u64 {
-        slot * 12 + self.config.chain.genesis_time
+        slot * S::seconds_per_slot() + self.config.chain.genesis_time
     }
 
     // Determines blockhash_slot age and returns true if it is less than 14 days old
