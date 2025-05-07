@@ -20,9 +20,17 @@ pub fn is_finality_proof_valid(
         (41, 6)
     };
 
+    // if genesis, use genesis block header
+    // TODO make not ugly or remove and work around
+    let leaf_object = if finality_header.slot == 0 {
+        BeaconBlockHeader::default()
+    } else {
+        finality_header.clone()
+    };
+
     is_proof_valid(
         attested_header.state_root,
-        finality_header,
+        &leaf_object,
         finality_branch,
         depth,
         index,

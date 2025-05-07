@@ -294,6 +294,15 @@ pub fn verify_generic_update<S: ConsensusSpec>(
 
     if let Some(finalized_header) = &update.finalized_header {
         if let Some(finality_branch) = &update.finality_branch {
+            // Special case for genesis block
+            let is_genesis = finalized_header.beacon().slot == 0
+                || (finalized_header.beacon().parent_root == B256::ZERO
+                    && calc_sync_period::<S>(finalized_header.beacon().slot) == 0);
+
+            if is_genesis {
+                // Genesis blocks are implicitly finalized
+                return Ok(());
+            }
             if !is_valid_header::<S>(finalized_header, forks) {
                 return Err(ConsensusError::InvalidExecutionPayloadProof.into());
             }
