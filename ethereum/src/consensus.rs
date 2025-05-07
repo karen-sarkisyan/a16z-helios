@@ -140,7 +140,8 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>, DB: Database> ConsensusClient<S, R, D
             _ = inner.send_blocks().await;
 
             let start = Instant::now() + inner.duration_until_next_update().to_std().unwrap();
-            let mut interval = interval_at(start, std::time::Duration::from_secs(12));
+            let mut interval =
+                interval_at(start, std::time::Duration::from_secs(S::seconds_per_slot()));
 
             loop {
                 tokio::select! {
@@ -188,7 +189,7 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>, DB: Database> ConsensusClient<S, R, D
     pub fn expected_current_slot(&self) -> u64 {
         let now = SystemTime::now();
 
-        expected_current_slot(now, self.genesis_time)
+        expected_current_slot::<S>(now, self.genesis_time)
     }
 }
 
@@ -582,11 +583,11 @@ impl<S: ConsensusSpec, R: ConsensusRpc<S>> Inner<S, R> {
     pub fn expected_current_slot(&self) -> u64 {
         let now = SystemTime::now();
 
-        expected_current_slot(now, self.config.chain.genesis_time)
+        expected_current_slot::<S>(now, self.config.chain.genesis_time)
     }
 
     fn slot_timestamp(&self, slot: u64) -> u64 {
-        slot * 12 + self.config.chain.genesis_time
+        slot * S::seconds_per_slot() + self.config.chain.genesis_time
     }
 
     // Determines blockhash_slot age and returns true if it is less than 14 days old

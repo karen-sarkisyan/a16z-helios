@@ -378,7 +378,7 @@ pub fn force_update<S: ConsensusSpec>(store: &mut LightClientStore<S>, current_s
     }
 }
 
-pub fn expected_current_slot(now: SystemTime, genesis_time: u64) -> u64 {
+pub fn expected_current_slot<S: ConsensusSpec>(now: SystemTime, genesis_time: u64) -> u64 {
     let now = now
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| panic!("unreachable"))
@@ -386,7 +386,7 @@ pub fn expected_current_slot(now: SystemTime, genesis_time: u64) -> u64 {
 
     let since_genesis = now - genesis_time;
 
-    since_genesis / 12
+    since_genesis / S::seconds_per_slot()
 }
 
 pub fn calc_sync_period<S: ConsensusSpec>(slot: u64) -> u64 {

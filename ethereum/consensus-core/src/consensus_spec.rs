@@ -23,6 +23,11 @@ pub trait ConsensusSpec: 'static + Default + Sync + Send + Clone + Debug + Parti
     type MaxWithdrawalRequests: Unsigned + Default + Debug + Sync + Send + Clone + PartialEq;
     type MaxDepositRequests: Unsigned + Default + Debug + Sync + Send + Clone + PartialEq;
     type MaxConsolidationRequests: Unsigned + Default + Debug + Sync + Send + Clone + PartialEq;
+    type SecondsPerSlot: Unsigned + Default + Debug + Sync + Send + Clone + PartialEq;
+
+    fn seconds_per_slot() -> u64 {
+        Self::SecondsPerSlot::to_u64()
+    }
 
     fn slots_per_epoch() -> u64 {
         Self::SlotsPerEpoch::to_u64()
@@ -64,6 +69,7 @@ impl ConsensusSpec for MainnetConsensusSpec {
     type MaxDepositRequests = typenum::U8192;
     type MaxWithdrawalRequests = typenum::U16;
     type MaxConsolidationRequests = typenum::U2;
+    type SecondsPerSlot = typenum::U12;
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -89,4 +95,5 @@ impl ConsensusSpec for MinimalConsensusSpec {
     type MaxDepositRequests = typenum::U4;
     type MaxWithdrawalRequests = typenum::U2;
     type MaxConsolidationRequests = typenum::U1;
+    type SecondsPerSlot = typenum::U6;
 }
